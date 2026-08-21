@@ -60,12 +60,12 @@ function vectorDistance(a: number[], b: number[]) {
   return Math.sqrt(sum / (a.length - 1));
 }
 
-function averageVectors(vectors: number[][]): number[] | null {
+function averageVectors(vectors: number[][], processedFrameCount: number): number[] | null {
   if (!vectors.length) return null;
   const frequencies = new Map<number, number>();
   vectors.forEach((vector) => frequencies.set(vector[0], (frequencies.get(vector[0]) ?? 0) + 1));
   const [commonHandCount, consistentFrameCount] = [...frequencies.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (consistentFrameCount < 6 || consistentFrameCount / vectors.length < 0.7) return null;
+  if (consistentFrameCount < 6 || consistentFrameCount / processedFrameCount < 0.7) return null;
   const matching = vectors.filter((vector) => vector[0] === commonHandCount);
   return matching[0].map((_, index) => {
     if (index === 0) return commonHandCount;
@@ -113,7 +113,7 @@ export default function Home() {
   const lastVideoTimeRef = useRef(-1);
   const recentLabelsRef = useRef<string[]>([]);
   const lastSpokenRef = useRef({ label: '', time: 0 });
-  const trainingRef = useRef<{ stage: TrainingStage; label: string; frames: number[][] }>({ stage: 'idle', label: '', frames: [] });
+  const trainingRef = useRef<{ stage: TrainingStage; label: string; frames: number[][]; processedFrames: number }>({ stage: 'idle', label: '', frames: [], processedFrames: 0 });
   const trainingTimersRef = useRef<number[]>([]);
   const trainingFeedbackRef = useRef(false);
 
@@ -229,6 +229,7 @@ export default function Home() {
       drawHands(canvas, video, result.landmarks);
       const vector = makeVector(result);
       latestVectorRef.current = vector;
+      if (trainingRef.current.stage === 'capturing') trainingRef.current.processedFrames += 1;
       if (vector) {
         if (trainingRef.current.stage === 'capturing') {
           trainingRef.current.frames.push([...vector]);
@@ -252,7 +253,7 @@ export default function Home() {
   const cancelTraining = useCallback((message = '学習をキャンセルしました') => {
     trainingTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     trainingTimersRef.current = [];
-    trainingRef.current = { stage: 'idle', label: '', frames: [] };
+    trainingRef.current = { stage: 'idle', label: '', frames: [], processedFrames: 0 };
     setTrainingStage('idle');
     setTrainingLabel('');
     setCapturedFrames(0);
@@ -323,7 +324,7 @@ export default function Home() {
 
   function finishTraining() {
     const session = trainingRef.current;
-    const vector = averageVectors(session.frames);
+    const vector = averageVectors(session.frames, session.processedFrames);
     if (!vector || session.frames.length < 6) {
       cancelTraining('手を十分に見つけられませんでした。もう一度ためしてね');
       return;
@@ -359,7 +360,7 @@ export default function Home() {
     setCapturedFrames(0);
     setTrainingStage('countdown');
     setTrainingLabel(selectedLabel);
-    trainingRef.current = { stage: 'countdown', label: selectedLabel, frames: [] };
+    trainingRef.current = { stage: 'countdown', label: selectedLabel, frames: [], processedFrames: 0 };
     setStatus('手を見せたまま待ってね。あと3秒');
     [2, 1].forEach((number, index) => {
       trainingTimersRef.current.push(window.setTimeout(() => {
@@ -382,6 +383,7 @@ export default function Home() {
     samplesRef.current = next;
     setSamples(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ labels, samples: next }));
+    trainingFeedbackRef.current = true;
     setStatus(`「${selectedLabel}」の学習を消しました`);
   }
 
