@@ -244,6 +244,9 @@ export default function Home() {
     setTrainingLabel('');
     setCapturedFrames(0);
     setCountdown(3);
+    recentLabelsRef.current = [];
+    setRecognized('まだ認識していません');
+    setConfidence(0);
     setStatus(message);
   }, []);
 
