@@ -10,9 +10,11 @@ import {
 
 type Phase = 'idle' | 'loading' | 'ready' | 'error';
 type Sample = { label: string; vector: number[] };
+type TrainingStage = 'idle' | 'countdown' | 'capturing';
 
 const DEFAULT_LABELS = ['こんにちは', 'ありがとう', '大丈夫', '助けて', 'もう一度'];
-const STORAGE_KEY = 'shuwa-voice-samples-v1';
+const STORAGE_KEY = 'shuwa-voice-samples-v2';
+const LEGACY_STORAGE_KEY = 'shuwa-voice-samples-v1';
 const CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
   [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15],
@@ -58,6 +60,19 @@ function vectorDistance(a: number[], b: number[]) {
   return Math.sqrt(sum / (a.length - 1));
 }
 
+function averageVectors(vectors: number[][], processedFrameCount: number): number[] | null {
+  if (!vectors.length) return null;
+  const frequencies = new Map<number, number>();
+  vectors.forEach((vector) => frequencies.set(vector[0], (frequencies.get(vector[0]) ?? 0) + 1));
+  const [commonHandCount, consistentFrameCount] = [...frequencies.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (consistentFrameCount < 6 || consistentFrameCount / processedFrameCount < 0.7) return null;
+  const matching = vectors.filter((vector) => vector[0] === commonHandCount);
+  return matching[0].map((_, index) => {
+    if (index === 0) return commonHandCount;
+    return matching.reduce((sum, vector) => sum + vector[index], 0) / matching.length;
+  });
+}
+
 function drawHands(canvas: HTMLCanvasElement, video: HTMLVideoElement, hands: NormalizedLandmark[][]) {
   const width = video.videoWidth || 1280;
   const height = video.videoHeight || 720;
@@ -98,6 +113,9 @@ export default function Home() {
   const lastVideoTimeRef = useRef(-1);
   const recentLabelsRef = useRef<string[]>([]);
   const lastSpokenRef = useRef({ label: '', time: 0 });
+  const trainingRef = useRef<{ stage: TrainingStage; label: string; frames: number[][]; processedFrames: number }>({ stage: 'idle', label: '', frames: [], processedFrames: 0 });
+  const trainingTimersRef = useRef<number[]>([]);
+  const trainingFeedbackRef = useRef(false);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('カメラを始めると、ここに案内が出ます');
@@ -109,23 +127,44 @@ export default function Home() {
   const [history, setHistory] = useState<string[]>([]);
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [handsVisible, setHandsVisible] = useState(0);
+  const [trainingStage, setTrainingStage] = useState<TrainingStage>('idle');
+  const [trainingLabel, setTrainingLabel] = useState('');
+  const [countdown, setCountdown] = useState(3);
+  const [capturedFrames, setCapturedFrames] = useState(0);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as { labels?: string[]; samples?: Sample[] };
-      if (parsed.labels?.length === 5) {
-        setLabels(parsed.labels);
-        setSelectedLabel(parsed.labels[0]);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (!saved) {
+          const legacySaved = localStorage.getItem(LEGACY_STORAGE_KEY);
+          if (legacySaved) {
+            const legacy = JSON.parse(legacySaved) as { labels?: string[] };
+            if (legacy.labels?.length === 5) {
+              setLabels(legacy.labels);
+              setSelectedLabel(legacy.labels[0]);
+            }
+            setStatus('学習方法が新しくなりました。手話を3回ずつ覚えさせてね');
+          }
+          return;
+        }
+        const parsed = JSON.parse(saved) as { labels?: string[]; samples?: Sample[] };
+        if (parsed.labels?.length === 5) {
+          setLabels(parsed.labels);
+          setSelectedLabel(parsed.labels[0]);
+        }
+        if (Array.isArray(parsed.samples)) {
+          setSamples(parsed.samples);
+          samplesRef.current = parsed.samples;
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
       }
-      if (Array.isArray(parsed.samples)) {
-        setSamples(parsed.samples);
-        samplesRef.current = parsed.samples;
-      }
-    } catch {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const speak = useCallback((text: string) => {
@@ -138,8 +177,14 @@ export default function Home() {
   }, []);
 
   const runRecognition = useCallback((vector: number[]) => {
-    const allSamples = samplesRef.current;
-    if (!allSamples.length) return;
+    const counts = new Map<string, number>();
+    samplesRef.current.forEach((sample) => counts.set(sample.label, (counts.get(sample.label) ?? 0) + 1));
+    const allSamples = samplesRef.current.filter((sample) => (counts.get(sample.label) ?? 0) >= 3);
+    if (!allSamples.length) {
+      setRecognized('まずは1つ、3回覚えさせてね');
+      setConfidence(0);
+      return;
+    }
     let best: { label: string; distance: number } | null = null;
     for (const sample of allSamples) {
       const distance = vectorDistance(vector, sample.vector);
@@ -164,12 +209,17 @@ export default function Home() {
     if (autoSpeak) speak(best.label);
   }, [autoSpeak, speak]);
 
-  const detectFrame = useCallback(() => {
+  const runRecognitionRef = useRef(runRecognition);
+  useEffect(() => {
+    runRecognitionRef.current = runRecognition;
+  }, [runRecognition]);
+
+  const detectFrame = useCallback(function frame() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const landmarker = landmarkerRef.current;
     if (!video || !canvas || !landmarker || video.readyState < 2) {
-      frameRef.current = requestAnimationFrame(detectFrame);
+      frameRef.current = requestAnimationFrame(frame);
       return;
     }
     if (video.currentTime !== lastVideoTimeRef.current) {
@@ -179,19 +229,44 @@ export default function Home() {
       drawHands(canvas, video, result.landmarks);
       const vector = makeVector(result);
       latestVectorRef.current = vector;
+      if (trainingRef.current.stage === 'capturing') trainingRef.current.processedFrames += 1;
       if (vector) {
-        setStatus(`${result.landmarks.length}つの手を見つけました`);
-        runRecognition(vector);
+        if (trainingRef.current.stage === 'capturing') {
+          trainingRef.current.frames.push([...vector]);
+          setCapturedFrames(trainingRef.current.frames.length);
+          setStatus(`「${trainingRef.current.label}」の形を記録しています。手を止めてね`);
+        } else if (trainingRef.current.stage === 'countdown') {
+          // カウントダウン中は手を追跡するだけで、通常認識は行わない。
+        } else {
+          if (!trainingFeedbackRef.current) setStatus(`${result.landmarks.length}つの手を見つけました`);
+          runRecognitionRef.current(vector);
+        }
       } else {
         recentLabelsRef.current = [];
-        setStatus('手を四角の中に見せてね');
+        if (!trainingFeedbackRef.current) setStatus('手を四角の中に見せてね');
         setConfidence(0);
       }
     }
-    frameRef.current = requestAnimationFrame(detectFrame);
-  }, [runRecognition]);
+    frameRef.current = requestAnimationFrame(frame);
+  }, []);
+
+  const cancelTraining = useCallback((message = '学習をキャンセルしました') => {
+    trainingTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    trainingTimersRef.current = [];
+    trainingRef.current = { stage: 'idle', label: '', frames: [], processedFrames: 0 };
+    setTrainingStage('idle');
+    setTrainingLabel('');
+    setCapturedFrames(0);
+    setCountdown(3);
+    recentLabelsRef.current = [];
+    setRecognized('まだ認識していません');
+    setConfidence(0);
+    trainingFeedbackRef.current = true;
+    setStatus(message);
+  }, []);
 
   const stopCamera = useCallback(() => {
+    cancelTraining('カメラを止めました');
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
     frameRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -201,10 +276,10 @@ export default function Home() {
     if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     setPhase('idle');
     setHandsVisible(0);
-    setStatus('カメラを止めました');
-  }, []);
+  }, [cancelTraining]);
 
   useEffect(() => () => {
+    trainingTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     landmarkerRef.current?.close();
@@ -213,6 +288,7 @@ export default function Home() {
 
   async function startCamera() {
     try {
+      trainingFeedbackRef.current = false;
       setPhase('loading');
       setStatus('AIとカメラを準備しています…');
       if (!landmarkerRef.current) {
@@ -246,22 +322,73 @@ export default function Home() {
     }
   }
 
-  function saveSample() {
-    const vector = latestVectorRef.current;
-    if (!vector) {
-      setStatus('手が見えていません。手を映してから押してね');
+  function finishTraining() {
+    const session = trainingRef.current;
+    const vector = averageVectors(session.frames, session.processedFrames);
+    if (!vector || session.frames.length < 6) {
+      cancelTraining('手を十分に見つけられませんでした。もう一度ためしてね');
       return;
     }
-    const next = [...samplesRef.current, { label: selectedLabel, vector }];
+    const existingSamples = samplesRef.current.filter((sample) => sample.label === session.label);
+    const expectedHandCount = existingSamples[0]?.vector[0];
+    if (expectedHandCount !== undefined && vector[0] !== expectedHandCount) {
+      cancelTraining(expectedHandCount === 1
+        ? 'このことばは片手で練習中です。片手でやり直してね'
+        : 'このことばは両手で練習中です。両手でやり直してね');
+      return;
+    }
+    const next = [...samplesRef.current, { label: session.label, vector }];
     samplesRef.current = next;
     setSamples(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ labels, samples: next }));
-    const count = next.filter((sample) => sample.label === selectedLabel).length;
-    setStatus(`「${selectedLabel}」を覚えました（${count}/3回）`);
-    speak('覚えました');
+    const count = next.filter((sample) => sample.label === session.label).length;
+    cancelTraining(`「${session.label}」を覚えました（${Math.min(count, 3)}/3回）`);
+    speak(count >= 3 ? '学習が完成しました' : '覚えました');
+  }
+
+  function startTraining() {
+    if (!latestVectorRef.current) {
+      setStatus('手が見えていません。手を映してから押してね');
+      return;
+    }
+    window.speechSynthesis?.cancel();
+    trainingFeedbackRef.current = false;
+    recentLabelsRef.current = [];
+    setRecognized('学習中です');
+    setConfidence(0);
+    setCountdown(3);
+    setCapturedFrames(0);
+    setTrainingStage('countdown');
+    setTrainingLabel(selectedLabel);
+    trainingRef.current = { stage: 'countdown', label: selectedLabel, frames: [], processedFrames: 0 };
+    setStatus('手を見せたまま待ってね。あと3秒');
+    [2, 1].forEach((number, index) => {
+      trainingTimersRef.current.push(window.setTimeout(() => {
+        setCountdown(number);
+        setStatus(`手を見せたまま待ってね。あと${number}秒`);
+      }, (index + 1) * 1000));
+    });
+    trainingTimersRef.current.push(window.setTimeout(() => {
+      trainingRef.current.stage = 'capturing';
+      setTrainingStage('capturing');
+      setCapturedFrames(0);
+      setStatus(`「${selectedLabel}」を記録しています。手を止めてね`);
+    }, 3000));
+    trainingTimersRef.current.push(window.setTimeout(finishTraining, 4200));
+  }
+
+  function resetSelectedLabel() {
+    if (trainingRef.current.stage !== 'idle') return;
+    const next = samplesRef.current.filter((sample) => sample.label !== selectedLabel);
+    samplesRef.current = next;
+    setSamples(next);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ labels, samples: next }));
+    trainingFeedbackRef.current = true;
+    setStatus(`「${selectedLabel}」の学習を消しました`);
   }
 
   function updateLabel(index: number, value: string) {
+    if (trainingRef.current.stage !== 'idle') return;
     const next = labels.map((label, labelIndex) => labelIndex === index ? value : label);
     const old = labels[index];
     const renamedSamples = samplesRef.current.map((sample) => sample.label === old ? { ...sample, label: value } : sample);
@@ -273,13 +400,14 @@ export default function Home() {
   }
 
   function resetLearning() {
+    cancelTraining('覚えた手の形を消しました');
     samplesRef.current = [];
     setSamples([]);
     setHistory([]);
     setRecognized('まだ認識していません');
     setConfidence(0);
     localStorage.removeItem(STORAGE_KEY);
-    setStatus('覚えた手の形を消しました');
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
 
   const trainedCount = (label: string) => samples.filter((sample) => sample.label === label).length;
@@ -302,6 +430,7 @@ export default function Home() {
             <div className="camera-stage">
               <video ref={videoRef} playsInline muted aria-label="カメラの映像" /><canvas ref={canvasRef} aria-hidden="true" />
               <div className="guide-frame" aria-hidden="true"><span>この中に手を見せてね</span></div>
+              {trainingStage !== 'idle' && <div className={`training-overlay ${trainingStage}`} role="status" aria-live="polite"><span aria-hidden="true">{trainingStage === 'countdown' ? countdown : capturedFrames}</span><strong>{trainingStage === 'countdown' ? 'この形のまま待ってね' : '記録しています'}</strong><small>{trainingStage === 'countdown' ? `「${trainingLabel}」の学習を始めます` : '手を止めて、カメラを見てね'}</small></div>}
               {phase !== 'ready' && <div className="camera-empty"><span className="hand-symbol" aria-hidden="true">✋</span><strong>カメラはまだ止まっています</strong><small>映像は保存も送信もしません</small></div>}
             </div>
             <div className="camera-actions">
@@ -318,16 +447,16 @@ export default function Home() {
           </aside>
         </section>
         <section className="training" aria-labelledby="training-title">
-          <div className="section-heading"><div><span className="step-number">1</span><p className="eyebrow">さいしょにすること</p></div><h2 id="training-title">5つの手話を<br />AIに覚えさせよう</h2><p>手話を選び、カメラに手を見せたまま「この形を覚える」を押します。角度を少し変えて、1つにつき3回がおすすめです。</p></div>
+          <div className="section-heading"><div><span className="step-number">1</span><p className="eyebrow">さいしょにすること</p></div><h2 id="training-title">5つの手話を<br />AIに覚えさせよう</h2><p>ことばを選んで学習を始めると、3秒後に約1秒間だけ手の形を記録します。角度を少し変えて、1つにつき3回覚えさせてね。</p></div>
           <div className="training-panel">
             <div className="label-grid">
               {labels.map((label, index) => {
                 const count = trainedCount(label);
-                return <label key={index} className={`label-card ${selectedLabel === label ? 'selected' : ''}`}><input type="radio" name="selected-label" checked={selectedLabel === label} onChange={() => setSelectedLabel(label)} /><span className="label-number">0{index + 1}</span><input className="label-input" value={label} aria-label={`${index + 1}番目のことば`} onFocus={() => setSelectedLabel(label)} onChange={(event) => updateLabel(index, event.target.value)} /><span className={`count-badge ${count >= 3 ? 'done' : ''}`}>{Math.min(count, 3)}/3</span></label>;
+                return <label key={index} className={`label-card ${selectedLabel === label ? 'selected' : ''} ${trainingStage !== 'idle' ? 'locked' : ''}`}><input type="radio" name="selected-label" checked={selectedLabel === label} disabled={trainingStage !== 'idle'} onChange={() => setSelectedLabel(label)} /><span className="label-number">0{index + 1}</span><input className="label-input" value={label} disabled={trainingStage !== 'idle'} aria-label={`${index + 1}番目のことば`} onFocus={() => setSelectedLabel(label)} onChange={(event) => updateLabel(index, event.target.value)} /><span className={`count-badge ${count >= 3 ? 'done' : ''}`}>{Math.min(count, 3)}/3</span></label>;
               })}
             </div>
-            <div className="learn-box"><div><span>いま覚えることば</span><strong>{selectedLabel || 'ことばを入力してね'}</strong></div><button className="button learn-button" onClick={saveSample} disabled={phase !== 'ready' || !selectedLabel.trim()}>＋ この形を覚える</button><small>写真ではなく、手の点の数字だけをこのPCに保存します。</small></div>
-            <button className="reset-button" onClick={resetLearning}>覚えた形をぜんぶ消す</button>
+            <div className="learn-box"><div><span>いま覚えることば</span><strong>{selectedLabel || 'ことばを入力してね'}</strong></div>{trainingStage === 'idle' ? <button className="button learn-button" onClick={startTraining} disabled={phase !== 'ready' || !selectedLabel.trim() || trainedCount(selectedLabel) >= 3}>{trainedCount(selectedLabel) >= 3 ? '✓ 3回の学習が完成' : '＋ ガイド付きで覚える'}</button> : <button className="button cancel-button" onClick={() => cancelTraining()}>× 学習をやめる</button>}<small>写真ではなく、約1秒分の手の点を平均した数字だけをこのPCに保存します。3回そろったことばだけを認識します。</small></div>
+            <div className="reset-actions">{trainedCount(selectedLabel) > 0 && <button className="reset-button" disabled={trainingStage !== 'idle'} onClick={resetSelectedLabel}>「{selectedLabel}」だけ学び直す</button>}<button className="reset-button" onClick={resetLearning}>覚えた形をぜんぶ消す</button></div>
           </div>
         </section>
         <section className="how-it-works" aria-labelledby="how-title"><p className="eyebrow">しくみはかんたん</p><h2 id="how-title">3つのステップで伝わる</h2><div className="steps"><article><span>01</span><b aria-hidden="true">✋</b><h3>見つける</h3><p>カメラで手の関節を見つけます。</p></article><article><span>02</span><b aria-hidden="true">⌁</b><h3>考える</h3><p>覚えた手の形とくらべます。</p></article><article><span>03</span><b aria-hidden="true">あ</b><h3>伝える</h3><p>ことばを文字と声で出します。</p></article></div></section>
