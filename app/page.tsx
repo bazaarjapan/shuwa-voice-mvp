@@ -350,6 +350,7 @@ export default function Home() {
   }
 
   function resetSelectedLabel() {
+    if (trainingRef.current.stage !== 'idle') return;
     const next = samplesRef.current.filter((sample) => sample.label !== selectedLabel);
     samplesRef.current = next;
     setSamples(next);
@@ -358,6 +359,7 @@ export default function Home() {
   }
 
   function updateLabel(index: number, value: string) {
+    if (trainingRef.current.stage !== 'idle') return;
     const next = labels.map((label, labelIndex) => labelIndex === index ? value : label);
     const old = labels[index];
     const renamedSamples = samplesRef.current.map((sample) => sample.label === old ? { ...sample, label: value } : sample);
@@ -420,11 +422,11 @@ export default function Home() {
             <div className="label-grid">
               {labels.map((label, index) => {
                 const count = trainedCount(label);
-                return <label key={index} className={`label-card ${selectedLabel === label ? 'selected' : ''}`}><input type="radio" name="selected-label" checked={selectedLabel === label} onChange={() => setSelectedLabel(label)} /><span className="label-number">0{index + 1}</span><input className="label-input" value={label} aria-label={`${index + 1}番目のことば`} onFocus={() => setSelectedLabel(label)} onChange={(event) => updateLabel(index, event.target.value)} /><span className={`count-badge ${count >= 3 ? 'done' : ''}`}>{Math.min(count, 3)}/3</span></label>;
+                return <label key={index} className={`label-card ${selectedLabel === label ? 'selected' : ''} ${trainingStage !== 'idle' ? 'locked' : ''}`}><input type="radio" name="selected-label" checked={selectedLabel === label} disabled={trainingStage !== 'idle'} onChange={() => setSelectedLabel(label)} /><span className="label-number">0{index + 1}</span><input className="label-input" value={label} disabled={trainingStage !== 'idle'} aria-label={`${index + 1}番目のことば`} onFocus={() => setSelectedLabel(label)} onChange={(event) => updateLabel(index, event.target.value)} /><span className={`count-badge ${count >= 3 ? 'done' : ''}`}>{Math.min(count, 3)}/3</span></label>;
               })}
             </div>
             <div className="learn-box"><div><span>いま覚えることば</span><strong>{selectedLabel || 'ことばを入力してね'}</strong></div>{trainingStage === 'idle' ? <button className="button learn-button" onClick={startTraining} disabled={phase !== 'ready' || !selectedLabel.trim() || trainedCount(selectedLabel) >= 3}>{trainedCount(selectedLabel) >= 3 ? '✓ 3回の学習が完成' : '＋ ガイド付きで覚える'}</button> : <button className="button cancel-button" onClick={() => cancelTraining()}>× 学習をやめる</button>}<small>写真ではなく、約1秒分の手の点を平均した数字だけをこのPCに保存します。3回そろったことばだけを認識します。</small></div>
-            <div className="reset-actions">{trainedCount(selectedLabel) > 0 && <button className="reset-button" onClick={resetSelectedLabel}>「{selectedLabel}」だけ学び直す</button>}<button className="reset-button" onClick={resetLearning}>覚えた形をぜんぶ消す</button></div>
+            <div className="reset-actions">{trainedCount(selectedLabel) > 0 && <button className="reset-button" disabled={trainingStage !== 'idle'} onClick={resetSelectedLabel}>「{selectedLabel}」だけ学び直す</button>}<button className="reset-button" onClick={resetLearning}>覚えた形をぜんぶ消す</button></div>
           </div>
         </section>
         <section className="how-it-works" aria-labelledby="how-title"><p className="eyebrow">しくみはかんたん</p><h2 id="how-title">3つのステップで伝わる</h2><div className="steps"><article><span>01</span><b aria-hidden="true">✋</b><h3>見つける</h3><p>カメラで手の関節を見つけます。</p></article><article><span>02</span><b aria-hidden="true">⌁</b><h3>考える</h3><p>覚えた手の形とくらべます。</p></article><article><span>03</span><b aria-hidden="true">あ</b><h3>伝える</h3><p>ことばを文字と声で出します。</p></article></div></section>
