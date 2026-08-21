@@ -13,7 +13,8 @@ type Sample = { label: string; vector: number[] };
 type TrainingStage = 'idle' | 'countdown' | 'capturing';
 
 const DEFAULT_LABELS = ['こんにちは', 'ありがとう', '大丈夫', '助けて', 'もう一度'];
-const STORAGE_KEY = 'shuwa-voice-samples-v1';
+const STORAGE_KEY = 'shuwa-voice-samples-v2';
+const LEGACY_STORAGE_KEY = 'shuwa-voice-samples-v1';
 const CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
   [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15],
@@ -136,7 +137,12 @@ export default function Home() {
       if (cancelled) return;
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
-        if (!saved) return;
+        if (!saved) {
+          if (localStorage.getItem(LEGACY_STORAGE_KEY)) {
+            setStatus('学習方法が新しくなりました。手話を3回ずつ覚えさせてね');
+          }
+          return;
+        }
         const parsed = JSON.parse(saved) as { labels?: string[]; samples?: Sample[] };
         if (parsed.labels?.length === 5) {
           setLabels(parsed.labels);
@@ -380,6 +386,7 @@ export default function Home() {
     setRecognized('まだ認識していません');
     setConfidence(0);
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   }
 
   const trainedCount = (label: string) => samples.filter((sample) => sample.label === label).length;
