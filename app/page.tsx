@@ -325,6 +325,14 @@ export default function Home() {
       cancelTraining('手を十分に見つけられませんでした。もう一度ためしてね');
       return;
     }
+    const existingSamples = samplesRef.current.filter((sample) => sample.label === session.label);
+    const expectedHandCount = existingSamples[0]?.vector[0];
+    if (expectedHandCount !== undefined && vector[0] !== expectedHandCount) {
+      cancelTraining(expectedHandCount === 1
+        ? 'このことばは片手で練習中です。片手でやり直してね'
+        : 'このことばは両手で練習中です。両手でやり直してね');
+      return;
+    }
     const next = [...samplesRef.current, { label: session.label, vector }];
     samplesRef.current = next;
     setSamples(next);
