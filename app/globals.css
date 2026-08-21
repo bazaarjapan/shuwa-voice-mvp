@@ -28,6 +28,12 @@ h1 em { color:var(--orange); font-style:normal; }
 .camera-stage canvas { transform:none; pointer-events:none; }
 .guide-frame { position:absolute; inset:12% 19%; border:1px dashed rgba(255,255,255,.55); border-radius:44% 44% 36% 36%; pointer-events:none; }
 .guide-frame span { position:absolute; left:50%; top:-14px; transform:translateX(-50%); padding:5px 11px; color:white; background:rgba(20,38,30,.78); border-radius:50px; font-size:11px; white-space:nowrap; }
+.training-overlay { position:absolute; inset:0; z-index:3; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; background:rgba(20,38,30,.82); backdrop-filter:blur(4px); }
+.training-overlay>span { display:grid; place-items:center; width:112px; height:112px; margin-bottom:14px; border:3px solid var(--yellow); border-radius:50%; color:var(--yellow); font-size:58px; line-height:1; font-weight:900; }
+.training-overlay.capturing>span { font-size:31px; animation:pulse-ring .8s ease-in-out infinite alternate; }
+.training-overlay strong { font-size:23px; }
+.training-overlay small { margin-top:8px; color:#dce5df; }
+@keyframes pulse-ring { to { transform:scale(1.08); background:rgba(246,186,39,.15); } }
 .camera-empty { position:absolute; inset:0; display:flex; flex-direction:column; gap:9px; align-items:center; justify-content:center; color:white; background:radial-gradient(circle at 50% 40%,#334f40,#15251d 62%); }
 .camera-empty strong { font-size:18px; }
 .camera-empty small { color:#c8d1cc; }
@@ -74,7 +80,9 @@ h2 { margin:23px 0 20px; font-size:clamp(38px,5vw,61px); line-height:1.03; lette
 .learn-box div strong { display:block; margin-top:3px; font-size:23px; }
 .learn-box small { grid-column:1/-1; color:#594919; }
 .learn-button { background:var(--ink); color:white; }
-.reset-button { display:block; margin:20px 0 0 auto; color:#8d3a2c; }
+.cancel-button { background:white; color:#8d3a2c; }
+.reset-actions { display:flex; justify-content:flex-end; gap:18px; margin-top:20px; }
+.reset-button { display:block; color:#8d3a2c; }
 .how-it-works { padding:100px 0; border-top:1px solid rgba(20,38,30,.22); }
 .how-it-works>h2 { margin-top:0; }
 .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:42px; }
