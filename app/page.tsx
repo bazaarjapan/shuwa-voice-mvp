@@ -138,7 +138,13 @@ export default function Home() {
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (!saved) {
-          if (localStorage.getItem(LEGACY_STORAGE_KEY)) {
+          const legacySaved = localStorage.getItem(LEGACY_STORAGE_KEY);
+          if (legacySaved) {
+            const legacy = JSON.parse(legacySaved) as { labels?: string[] };
+            if (legacy.labels?.length === 5) {
+              setLabels(legacy.labels);
+              setSelectedLabel(legacy.labels[0]);
+            }
             setStatus('学習方法が新しくなりました。手話を3回ずつ覚えさせてね');
           }
           return;
@@ -154,6 +160,7 @@ export default function Home() {
         }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
       }
     });
     return () => { cancelled = true; };
