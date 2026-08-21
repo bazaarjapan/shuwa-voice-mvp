@@ -115,6 +115,7 @@ export default function Home() {
   const lastSpokenRef = useRef({ label: '', time: 0 });
   const trainingRef = useRef<{ stage: TrainingStage; label: string; frames: number[][] }>({ stage: 'idle', label: '', frames: [] });
   const trainingTimersRef = useRef<number[]>([]);
+  const trainingFeedbackRef = useRef(false);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('カメラを始めると、ここに案内が出ます');
@@ -236,12 +237,12 @@ export default function Home() {
         } else if (trainingRef.current.stage === 'countdown') {
           // カウントダウン中は手を追跡するだけで、通常認識は行わない。
         } else {
-          setStatus(`${result.landmarks.length}つの手を見つけました`);
+          if (!trainingFeedbackRef.current) setStatus(`${result.landmarks.length}つの手を見つけました`);
           runRecognitionRef.current(vector);
         }
       } else {
         recentLabelsRef.current = [];
-        setStatus('手を四角の中に見せてね');
+        if (!trainingFeedbackRef.current) setStatus('手を四角の中に見せてね');
         setConfidence(0);
       }
     }
@@ -259,6 +260,7 @@ export default function Home() {
     recentLabelsRef.current = [];
     setRecognized('まだ認識していません');
     setConfidence(0);
+    trainingFeedbackRef.current = true;
     setStatus(message);
   }, []);
 
@@ -285,6 +287,7 @@ export default function Home() {
 
   async function startCamera() {
     try {
+      trainingFeedbackRef.current = false;
       setPhase('loading');
       setStatus('AIとカメラを準備しています…');
       if (!landmarkerRef.current) {
@@ -348,6 +351,7 @@ export default function Home() {
       return;
     }
     window.speechSynthesis?.cancel();
+    trainingFeedbackRef.current = false;
     recentLabelsRef.current = [];
     setRecognized('学習中です');
     setConfidence(0);
