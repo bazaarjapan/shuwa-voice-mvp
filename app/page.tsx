@@ -61,12 +61,11 @@ function vectorDistance(a: number[], b: number[]) {
 
 function averageVectors(vectors: number[][]): number[] | null {
   if (!vectors.length) return null;
-  const handCounts = vectors.map((vector) => vector[0]);
-  const commonHandCount = handCounts.sort((a, b) =>
-    handCounts.filter((count) => count === b).length - handCounts.filter((count) => count === a).length,
-  )[0];
+  const frequencies = new Map<number, number>();
+  vectors.forEach((vector) => frequencies.set(vector[0], (frequencies.get(vector[0]) ?? 0) + 1));
+  const [commonHandCount, consistentFrameCount] = [...frequencies.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (consistentFrameCount < 6 || consistentFrameCount / vectors.length < 0.7) return null;
   const matching = vectors.filter((vector) => vector[0] === commonHandCount);
-  if (!matching.length) return null;
   return matching[0].map((_, index) => {
     if (index === 0) return commonHandCount;
     return matching.reduce((sum, vector) => sum + vector[index], 0) / matching.length;
