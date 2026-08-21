@@ -402,7 +402,7 @@ export default function Home() {
             <div className="camera-stage">
               <video ref={videoRef} playsInline muted aria-label="カメラの映像" /><canvas ref={canvasRef} aria-hidden="true" />
               <div className="guide-frame" aria-hidden="true"><span>この中に手を見せてね</span></div>
-              {trainingStage !== 'idle' && <div className={`training-overlay ${trainingStage}`} role="status" aria-live="assertive"><span>{trainingStage === 'countdown' ? countdown : capturedFrames}</span><strong>{trainingStage === 'countdown' ? 'この形のまま待ってね' : '記録しています'}</strong><small>{trainingStage === 'countdown' ? `「${trainingLabel}」の学習を始めます` : '手を止めて、カメラを見てね'}</small></div>}
+              {trainingStage !== 'idle' && <div className={`training-overlay ${trainingStage}`} role="status" aria-live="polite"><span aria-hidden="true">{trainingStage === 'countdown' ? countdown : capturedFrames}</span><strong>{trainingStage === 'countdown' ? 'この形のまま待ってね' : '記録しています'}</strong><small>{trainingStage === 'countdown' ? `「${trainingLabel}」の学習を始めます` : '手を止めて、カメラを見てね'}</small></div>}
               {phase !== 'ready' && <div className="camera-empty"><span className="hand-symbol" aria-hidden="true">✋</span><strong>カメラはまだ止まっています</strong><small>映像は保存も送信もしません</small></div>}
             </div>
             <div className="camera-actions">
